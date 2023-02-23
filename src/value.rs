@@ -467,6 +467,47 @@ impl ValueType for Cow<'_, str> {
 type_to_box_value!(Vec<u8>, Bytes, Binary(BlobSize::Blob(None)));
 type_to_box_value!(String, String, String(None));
 
+#[cfg(feature = "with-secrecy")]
+mod with_secrecy {
+    use super::*;
+    use secrecy::{Secret, Zeroize, ExposeSecret};
+
+    impl<T> From<Secret<T>> for Value
+    where
+        T: Clone + Into<Value> + Zeroize,
+    {
+        fn from(value: Secret<T>) -> Self {
+            // We unfortunately need to clone here to get access to the underlying secret.
+            // There is no way to expose the secret after it has been put into the `Secret` wrapper.
+            //
+            // Note: This completely destroys `secrecy`'s guarantee of zeroising the memory of the wrapped value upon dropping.
+            // Even if we somehow add a separate case for secrets that somehow magically maps the value, the secret will be exposed at some point.
+            value.expose_secret().clone().into()
+        }
+    }
+
+    impl<T> ValueType for Secret<T>
+    where
+        T: ValueType + Zeroize,
+    {
+        fn array_type() -> ArrayType {
+            T::array_type()
+        }
+
+        fn column_type() -> ColumnType {
+            T::column_type()
+        }
+
+        fn try_from(v: Value) -> Result<Self, ValueTypeErr> {
+            T::try_from(v).map(Secret::new)
+        }
+
+        fn type_name() -> String {
+            format!("Secret<{}>", T::type_name())
+        }
+    }
+}
+
 #[cfg(feature = "with-json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "with-json")))]
 mod with_json {
